@@ -1,0 +1,629 @@
+/****** 
+	
+	AUTHOR: C. Ibarra Figueroa
+
+	CREATE DATE: 6/2/21
+	
+	TABLES USED:[ELMR_MANUAL].[dbo].SYSTEM_billing_tx_history
+				[ELMR_MANUAL].[dbo].[AVCALPMLIVESYSTEM_staff_tx_history]
+				[ELMR_MANUAL].[dbo].[SYSTEM_patient_current_demographics]
+	
+	DESCRIPTION: Captures service, service category, age group, and sex totals for service provided by Lake Elsinore Mobile Crisis Team on a monthly basis.
+				 
+			Following information captured:		Query 1		Service Totals
+															Sum of Service Duration
+															Average Service Duration
+
+												Query 2		Service Category Totals
+
+												Query 3		Age Group Totals
+
+												Query 4		Consumer Sex Totals
+
+	Process: Unioned [ELMR_MANUAL].[dbo].SYSTEM_billing_tx_history with [ELMR_MANUAL].[dbo].[AVCALPMLIVESYSTEM_staff_tx_history] 
+			 then Left Joined with [ELMR_MANUAL].[dbo].[SYSTEM_patient_current_demographics]. 
+			 Four separate queries created to categorize and create totals.
+
+	Approx. Run Time: 6 mins.
+
+******/
+
+
+DECLARE @bdate DATE
+DECLARE @edate DATE
+
+SET @bdate = '2020-07-01' -- (Quarter Start Dates -- YYYY-07-01 / YYYY-10-01 / YYYY-01-01 / YYYY-04-01)
+SET @edate = '2021-03-31' -- (Quarter End Dates ---- YYYY-09-30 / YYYY-12-31 / YYYY-03-31 / YYYY-06-30)
+
+
+
+/******************************************************************/
+/**********QUERY FOR SERVICE TOTALS AND AVERAGE DURATION**********/
+SELECT
+
+	xX.[Fiscal Quarter],
+	xX.[Service Code],
+	count(xX.[Service Code]) AS 'Service Totals',
+	sum(xX.[Duration of Service]) as 'Sum of Service Duration',
+	sum(xX.[Duration of Service])/count(xX.[Service Code]) 'Average Service Duration'
+	
+FROM
+
+(
+
+	SELECT 
+
+		x.[Date of Service],
+			CASE 
+				WHEN DATEPART(MM, x.[Date of Service]) IN ('07','08','09') 
+					THEN 'Q1'
+				WHEN DATEPART(MM, x.[Date of Service]) IN ('10', '11', '12') 
+					THEN 'Q2'
+				WHEN DATEPART(MM, x.[Date of Service]) IN ('01','02','03') 
+					THEN 'Q3'
+				WHEN DATEPART(MM, x.[Date of Service]) IN ('04', '05', '06') 
+					THEN 'Q4'
+			ELSE NULL 
+			END AS 'Fiscal Quarter',
+
+		x.[Service Code],
+		x.[Service Value],
+		x.duration AS 'Duration of Service'
+
+	
+	FROM  
+
+(
+
+	SELECT 
+		b.PATID,
+		b.[date_of_service] AS 'Date of Service',
+		b.[SERVICE_CODE] AS 'Service Code',
+		b.v_service_value AS 'Service Value',
+		b.program_value 'Program Value', 
+		b.PROVIDER_ID AS 'Staff ID',
+		b.program_code AS 'Program Code',
+		b.duration
+	FROM [ELMR_MANUAL].[dbo].SYSTEM_billing_tx_history b 
+		
+		WHERE 
+			b.date_of_service BETWEEN @bdate AND @edate AND 
+			b.join_to_co_staff_tx_history IS NULL AND
+			b.transferred_service IS NULL AND 
+			b.SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				b.SERVICE_CODE NOT LIKE '%300%' AND
+				b.SERVICE_CODE NOT LIKE '%469%' AND
+				b.SERVICE_CODE NOT LIKE '%SA400%' AND 
+				b.SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**excluding non client centered services**/
+			b.v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**excluding non client centered services**/
+			b.option_id <> 'BILLING207' AND
+			b.PROVIDER_ID IN ('236964', '244562', '253849') AND
+				--b.PROVIDER_ID IN ('244562')
+			b.program_code IN ('33MU1', '336114' , '336114RS','336114PR')
+
+	UNION
+
+	SELECT
+		PATID,
+		date_of_service,
+		SERVICE_CODE,
+		v_service_value,
+		program_value,
+		STAFFID,
+		program_code,
+		duration
+	FROM [ELMR_MANUAL].[dbo].[AVCALPMLIVESYSTEM_staff_tx_history] 
+		
+		WHERE
+		    date_of_service BETWEEN @bdate AND @edate AND 
+			SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				SERVICE_CODE NOT LIKE '%300%' AND
+				SERVICE_CODE NOT LIKE '%469%' AND
+				SERVICE_CODE NOT LIKE '%SA400%' AND 
+				SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**beginning of non client centered services**/
+			v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**end of non client centered services**/
+			option_id <> 'BILLING207' and
+			STAFFID IN ('236964', '244562', '253849') and
+			program_code in ('33MU1' , '336114' , '336114RS', '336114PR')
+
+) x
+
+		LEFT JOIN [ELMR_MANUAL].[dbo].[SYSTEM_patient_current_demographics] D
+			ON x.PATID = D.PATID
+
+) xX
+
+GROUP BY xX.[Fiscal Quarter], xX.[Service Code]
+
+ORDER BY xX.[Service Code] ASC;
+
+
+
+/******************************************************************/
+/**********QUERY FOR SERVICE CATEGORY TOTALS**********/
+SELECT
+
+	xxX.[Service Category],
+	count(xxX.[Service Category]) AS 'Service Category Totals',
+	sum(xxX.[Duration of Service]) as 'Sum of Service Duration',
+	sum(xxX.[Duration of Service])/count(xxX.[Service Category]) 'Average Service Duration'
+
+FROM
+
+(
+
+SELECT
+
+	xX.[Date of Service],
+		CASE 
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('07','08','09') 
+				THEN 'Q1'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('10', '11', '12') 
+				THEN 'Q2'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('01','02','03') 
+				THEN 'Q3'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('04', '05', '06') 
+				THEN 'Q4'
+			ELSE NULL 
+			END AS 'Fiscal Quarter',
+
+	xX.[Service Code],
+		CASE 
+			WHEN xX.[Service Code] IN ('SA468CM','SA468CMY','520','529NB','590NB','SA445INB') 
+				THEN 'CASE MANAGEMENT'
+			WHEN xX.[Service Code] IN ('965CLT','904GEN','SA981') 
+				THEN 'CLIENT SUPPORT'
+			WHEN xX.[Service Code] IN ('SA440GRP','978CLT','SA421IND','SA421INDY','SA321RSIN','90832IT','90834IT') 
+				THEN 'COUSELING/THERAPY'
+			WHEN xX.[Service Code] IN ('90840','90839CI','409NB') 
+				THEN 'CRISIS INTERVENTION'
+			WHEN xX.[Service Code] IN ('90791AI') 
+				THEN 'ASSESSMENT INDIVIDUAL'
+			WHEN xX.[Service Code] IN ('907GEN') 
+				THEN 'CLINICAL SUPERVISION'
+			WHEN xX.[Service Code] IN ('620NB') 
+				THEN 'COMMUNITY CLIENT CONTACT (COUNTY)'
+		ELSE NULL 
+		END AS 'Service Category',
+
+	xX.[Duration of Service]
+
+FROM
+
+(
+
+	SELECT 
+
+		x.[Date of Service],
+		x.[Service Code],
+		x.[Service Value],
+		x.duration AS 'Duration of Service',
+		datediff(yy,date_of_birth, [Date of Service]) 'Age Date of Service',
+		D.patient_sex_value AS 'Consumer Identified Sex',
+		D.patid AS 'PATID1',
+		--x.PATID AS 'PATID2',
+		x.[Program Code],
+		x.[Program Value],
+		x.[Staff ID] 
+
+	FROM  
+
+(
+
+	SELECT 
+		b.PATID,
+		b.[date_of_service] AS 'Date of Service',
+		b.[SERVICE_CODE] AS 'Service Code',
+		b.v_service_value AS 'Service Value',
+		b.program_value 'Program Value', 
+		b.PROVIDER_ID AS 'Staff ID',
+		b.program_code AS 'Program Code',
+		b.duration
+	FROM [ELMR_MANUAL].[dbo].SYSTEM_billing_tx_history b 
+		
+		WHERE 
+			b.date_of_service BETWEEN @bdate AND @edate AND 
+			b.join_to_co_staff_tx_history IS NULL AND
+			b.transferred_service IS NULL AND 
+			b.SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				b.SERVICE_CODE NOT LIKE '%300%' AND
+				b.SERVICE_CODE NOT LIKE '%469%' AND
+				b.SERVICE_CODE NOT LIKE '%SA400%' AND 
+				b.SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**excluding non client centered services**/
+			b.v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**excluding non client centered services**/
+			b.option_id <> 'BILLING207' AND
+			b.PROVIDER_ID IN ('236964', '244562', '253849') AND
+				--b.PROVIDER_ID IN ('244562')
+			b.program_code IN ('33MU1', '336114' , '336114RS','336114PR')
+
+	UNION
+
+	SELECT
+		PATID,
+		date_of_service,
+		SERVICE_CODE,
+		v_service_value,
+		program_value,
+		STAFFID,
+		program_code,
+		duration
+	FROM [ELMR_MANUAL].[dbo].[AVCALPMLIVESYSTEM_staff_tx_history] 
+		
+		WHERE
+		    date_of_service BETWEEN @bdate AND @edate AND 
+			SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				SERVICE_CODE NOT LIKE '%300%' AND
+				SERVICE_CODE NOT LIKE '%469%' AND
+				SERVICE_CODE NOT LIKE '%SA400%' AND 
+				SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**beginning of non client centered services**/
+			v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**end of non client centered services**/
+			option_id <> 'BILLING207' and
+			STAFFID IN ('236964', '244562', '253849') and
+			program_code in ('33MU1' , '336114' , '336114RS', '336114PR')
+
+) x
+
+		LEFT JOIN [ELMR_MANUAL].[dbo].[SYSTEM_patient_current_demographics] D
+			ON x.PATID = D.PATID
+
+) xX
+
+) xxX
+
+GROUP BY xxX.[Service Category] 
+
+ORDER BY xxX.[Service Category] ASC;
+
+
+
+/******************************************************************/
+/**********QUERY FOR AGE GROUP TOTALS**********/
+SELECT
+
+	xxX.[Age Group],
+	count(xxX.[Age Group]) AS 'Age Group Totals'
+
+FROM
+
+(
+
+SELECT
+
+	xX.[Date of Service],
+	CASE 
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('07','08','09') 
+				THEN 'Q1'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('10', '11', '12') 
+				THEN 'Q2'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('01','02','03') 
+				THEN 'Q3'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('04', '05', '06') 
+				THEN 'Q4'
+			ELSE NULL 
+			END AS 'Fiscal Quarter',
+
+	--xX.[Age Date of Service],
+		CASE 
+			WHEN xX.[Age Date of Service] BETWEEN 0 AND 20 
+				THEN 'Youth/TAY'
+			WHEN xX.[Age Date of Service] BETWEEN 21 and 64
+				THEN 'Adult'
+			WHEN xX.[Age Date of Service] > 65 
+				THEN 'Older Adult'
+			WHEN xX.[Age Date of Service] IS NULL 
+				THEN 'AGE UNKNOWN'
+		ELSE NULL 
+		END AS 'Age Group'
+
+FROM
+
+(
+
+	SELECT 
+
+		x.[Date of Service],
+		x.[Service Code],
+		x.[Service Value],
+		x.duration AS 'Duration of Service',
+		datediff(yy,date_of_birth, [Date of Service]) 'Age Date of Service',
+		D.patient_sex_value AS 'Consumer Identified Sex',
+		D.patid AS 'PATID1',
+		--x.PATID AS 'PATID2',
+		x.[Program Code],
+		x.[Program Value],
+		x.[Staff ID] 
+
+	FROM  
+
+(
+
+	SELECT 
+		b.PATID,
+		b.[date_of_service] AS 'Date of Service',
+		b.[SERVICE_CODE] AS 'Service Code',
+		b.v_service_value AS 'Service Value',
+		b.program_value 'Program Value', 
+		b.PROVIDER_ID AS 'Staff ID',
+		b.program_code AS 'Program Code',
+		b.duration
+	FROM [ELMR_MANUAL].[dbo].SYSTEM_billing_tx_history b 
+		
+		WHERE 
+			b.date_of_service BETWEEN @bdate AND @edate AND 
+			b.join_to_co_staff_tx_history IS NULL AND
+			b.transferred_service IS NULL AND 
+			b.SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				b.SERVICE_CODE NOT LIKE '%300%' AND
+				b.SERVICE_CODE NOT LIKE '%469%' AND
+				b.SERVICE_CODE NOT LIKE '%SA400%' AND 
+				b.SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**excluding non client centered services**/
+			b.v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**excluding non client centered services**/
+			b.option_id <> 'BILLING207' AND
+			b.PROVIDER_ID IN ('236964', '244562', '253849') AND
+				--b.PROVIDER_ID IN ('244562')
+			b.program_code IN ('33MU1', '336114' , '336114RS','336114PR')
+
+	UNION
+
+	SELECT
+		PATID,
+		date_of_service,
+		SERVICE_CODE,
+		v_service_value,
+		program_value,
+		STAFFID,
+		program_code,
+		duration
+	FROM [ELMR_MANUAL].[dbo].[AVCALPMLIVESYSTEM_staff_tx_history] 
+		
+		WHERE
+		    date_of_service BETWEEN @bdate AND @edate AND 
+			SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				SERVICE_CODE NOT LIKE '%300%' AND
+				SERVICE_CODE NOT LIKE '%469%' AND
+				SERVICE_CODE NOT LIKE '%SA400%' AND 
+				SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**beginning of non client centered services**/
+			v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**end of non client centered services**/
+			option_id <> 'BILLING207' and
+			STAFFID IN ('236964', '244562', '253849') and
+			program_code in ('33MU1' , '336114' , '336114RS', '336114PR')
+
+) x
+
+		LEFT JOIN [ELMR_MANUAL].[dbo].[SYSTEM_patient_current_demographics] D
+			ON x.PATID = D.PATID
+
+) xX
+
+) xxX
+
+GROUP BY xxX.[Age Group]
+
+ORDER BY xxX.[Age Group] ASC;
+
+
+
+/******************************************************************/
+/**********QUERY FOR SEX TOTALS**********/
+SELECT
+
+	xxX.[Consumer Sex],
+	count(xxX.[Consumer Sex]) AS 'Consumer Sex Totals'
+
+FROM
+
+(
+
+SELECT
+
+	xX.[Date of Service],
+		CASE 
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('07','08','09') 
+				THEN 'Q1'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('10', '11', '12') 
+				THEN 'Q2'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('01','02','03') 
+				THEN 'Q3'
+			WHEN DATEPART(MM, xx.[Date of Service]) IN ('04', '05', '06') 
+				THEN 'Q4'
+		ELSE NULL 
+		END AS 'Fiscal Quarter',
+
+	--xX.[Consumer Identified Sex],
+		CASE 
+			WHEN xX.[Consumer Identified Sex] IN ('MALE') 
+				THEN 'MALE'
+			WHEN xX.[Consumer Identified Sex] IN ('FEMALE') 
+				THEN 'FEMALE'
+			WHEN xX.[Consumer Identified Sex] IS NULL 
+				THEN 'SEX UNKNOWN'
+		ELSE NULL 
+		END AS 'Consumer Sex'
+
+FROM
+
+(
+
+	SELECT 
+
+		x.[Date of Service],
+		x.[Service Code],
+		x.[Service Value],
+		x.duration AS 'Duration of Service',
+		datediff(yy,date_of_birth, [Date of Service]) 'Age Date of Service',
+		D.patient_sex_value AS 'Consumer Identified Sex',
+		D.patid AS 'PATID1',
+		--x.PATID AS 'PATID2',
+		x.[Program Code],
+		x.[Program Value],
+		x.[Staff ID] 
+
+	FROM  
+
+(
+
+	SELECT 
+		b.PATID,
+		b.[date_of_service] AS 'Date of Service',
+		b.[SERVICE_CODE] AS 'Service Code',
+		b.v_service_value AS 'Service Value',
+		b.program_value 'Program Value', 
+		b.PROVIDER_ID AS 'Staff ID',
+		b.program_code AS 'Program Code',
+		b.duration
+	FROM [ELMR_MANUAL].[dbo].SYSTEM_billing_tx_history b 
+		
+		WHERE 
+			b.date_of_service BETWEEN @bdate AND @edate AND 
+			b.join_to_co_staff_tx_history IS NULL AND
+			b.transferred_service IS NULL AND 
+			b.SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				b.SERVICE_CODE NOT LIKE '%300%' AND
+				b.SERVICE_CODE NOT LIKE '%469%' AND
+				b.SERVICE_CODE NOT LIKE '%SA400%' AND 
+				b.SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**excluding non client centered services**/
+			b.v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**excluding non client centered services**/
+			b.option_id <> 'BILLING207' AND
+			b.PROVIDER_ID IN ('236964', '244562', '253849') AND
+				--b.PROVIDER_ID IN ('244562')
+			b.program_code IN ('33MU1', '336114' , '336114RS','336114PR')
+
+	UNION
+
+	SELECT
+		PATID,
+		date_of_service,
+		SERVICE_CODE,
+		v_service_value,
+		program_value,
+		STAFFID,
+		program_code,
+		duration
+	FROM [ELMR_MANUAL].[dbo].[AVCALPMLIVESYSTEM_staff_tx_history] 
+		
+		WHERE
+		    date_of_service BETWEEN @bdate AND @edate AND 
+			SERVICE_CODE NOT IN ('DELETE', '470CX', '301CX') AND 
+				SERVICE_CODE NOT LIKE '%300%' AND
+				SERVICE_CODE NOT LIKE '%469%' AND
+				SERVICE_CODE NOT LIKE '%SA400%' AND 
+				SERVICE_CODE NOT LIKE '%SA401%' AND
+		/**beginning of non client centered services**/
+			v_service_value NOT IN ('GENERAL ADMIN', 
+				'GENERAL ADMININSTRATION', 
+				'GENERAL TRAINING (County Only)', 
+				'GENERAL TRAINING RECEIVED',
+				'Lunch Placeholder', 
+				'MENTAL HEALTH PROMOTION (County)',
+				'OTHER ACTIVITIES', 
+				'PAID AND UNPAID TIME OFF', 
+				'PAID TIME OFF',                 
+				'Staff Meeting',
+				'Staff Travel/Transportation', 
+				'SU Appointment Placeholder', 
+				'Testing') AND /**end of non client centered services**/
+			option_id <> 'BILLING207' and
+			STAFFID IN ('236964', '244562', '253849') and
+			program_code in ('33MU1' , '336114' , '336114RS', '336114PR')
+
+) x
+
+		LEFT JOIN [ELMR_MANUAL].[dbo].[SYSTEM_patient_current_demographics] D
+			ON x.PATID = D.PATID
+
+) xX
+
+) xxX
+
+GROUP BY xxX.[Consumer Sex];
